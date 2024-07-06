@@ -13,20 +13,20 @@ pyckage is a basic NodeJS package manager implemented in Python.
 You can install pyckage directly from GitHub using pip:
 
 ```bash
-pip install git+https://github.com/yourusername/pyckage.git
+pip install git+https://github.com/jaydrennan/pyckage.git
 ```
 
 Alternatively, you can add it to your project's `requirements.txt` file:
 
 ```
-git+https://github.com/yourusername/pyckage.git
+git+https://github.com/jaydrennan/pyckage.git
 ```
 
 Or in your `pyproject.toml`:
 
 ```toml
 dependencies = [
-    "pyckage @ git+https://github.com/yourusername/pyckage.git",
+    "pyckage @ git+https://github.com/jaydrennan/pyckage.git",
 ]
 ```
 
