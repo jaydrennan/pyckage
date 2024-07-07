@@ -9,6 +9,8 @@ from src.pyckage.conflicts import (
     resolve_conflicts,
     find_compatible_version,
     check_and_resolve_conflicts,
+    create_package_lock,
+    write_package_lock,
 )
 from src.pyckage.npm_utils import find_max_satisfying
 
@@ -168,3 +170,118 @@ def test_check_and_resolve_conflicts_with_unresolvable_conflicts():
                 in messages[1]
             )
             assert resolved_deps == {}
+
+@patch("src.pyckage.conflicts.get_package_info")
+@patch("src.pyckage.conflicts.check_and_resolve_conflicts")
+@patch("src.pyckage.conflicts.find_max_satisfying")
+def test_create_package_lock(mock_find_max_satisfying, mock_check_and_resolve, mock_get_package_info):
+    mock_check_and_resolve.return_value = (True, [], {"package-a": "1.2.3", "package-b": "2.0.0"})
+    
+    package_a_info = {
+        "version": "1.2.3",
+        "dist": {"tarball": "https://registry.npmjs.org/package-a/-/package-a-1.2.3.tgz", "integrity": "sha512-abc123"},
+        "dependencies": {"nested-package": "^1.0.0"}
+    }
+    package_b_info = {
+        "version": "2.0.0",
+        "dist": {"tarball": "https://registry.npmjs.org/package-b/-/package-b-2.0.0.tgz", "integrity": "sha512-def456"},
+        "dependencies": {}
+    }
+    nested_package_info = {
+        "version": "1.0.0",
+        "dist": {"tarball": "https://registry.npmjs.org/nested-package/-/nested-package-1.0.0.tgz", "integrity": "sha512-ghi789"},
+        "dependencies": {},
+        "versions": {"1.0.0": {}, "1.1.0": {}, "1.2.0": {}}
+    }
+
+    mock_get_package_info.side_effect = lambda package, version=None: {
+        "package-a": package_a_info,
+        "package-b": package_b_info,
+        "nested-package": nested_package_info
+    }[package]
+
+    mock_find_max_satisfying.return_value = "1.0.0"  # For nested-package
+
+    dependencies = {"package-a": "^1.2.3", "package-b": "^2.0.0"}
+    lock_data = create_package_lock(dependencies)
+
+    assert lock_data["name"] == "project-name"
+    assert lock_data["version"] == "1.0.0"
+    assert lock_data["lockfileVersion"] == 2
+    assert lock_data["requires"] == True
+    assert "packages" in lock_data
+    assert "" in lock_data["packages"]
+
+    root_package = lock_data["packages"][""]
+    assert root_package["name"] == "project-name"
+    assert root_package["version"] == "1.0.0"
+    assert root_package["dependencies"] == dependencies  # This should be the original dependencies with carets
+
+    package_a_path = "node_modules/package-a"
+    assert package_a_path in lock_data["packages"]
+    package_a = lock_data["packages"][package_a_path]
+    assert package_a["version"] == "1.2.3"  # This should be the exact version
+    assert package_a["resolved"] == "https://registry.npmjs.org/package-a/-/package-a-1.2.3.tgz"
+    assert package_a["integrity"] == "sha512-abc123"
+
+    package_b_path = "node_modules/package-b"
+    assert package_b_path in lock_data["packages"]
+    package_b = lock_data["packages"][package_b_path]
+    assert package_b["version"] == "2.0.0"  # This should be the exact version
+    assert package_b["resolved"] == "https://registry.npmjs.org/package-b/-/package-b-2.0.0.tgz"
+    assert package_b["integrity"] == "sha512-def456"
+
+    nested_package_path = "node_modules/package-a/node_modules/nested-package"
+    assert nested_package_path in lock_data["packages"]
+    nested_package = lock_data["packages"][nested_package_path]
+    assert nested_package["version"] == "1.0.0"
+    assert nested_package["resolved"] == "https://registry.npmjs.org/nested-package/-/nested-package-1.0.0.tgz"
+    assert nested_package["integrity"] == "sha512-ghi789"
+
+@patch("src.pyckage.conflicts.create_package_lock")
+@patch("builtins.open", new_callable=mock_open)
+def test_write_package_lock(mock_file, mock_create_package_lock):
+    mock_lock_data = {
+        "name": "project-name",
+        "version": "1.0.0",
+        "lockfileVersion": 1,
+        "requires": True,
+        "dependencies": {
+            "package-a": {
+                "version": "1.2.3",
+                "resolved": "https://registry.npmjs.org/package-a/-/package-a-1.2.3.tgz",
+                "integrity": "sha512-abc123",
+                "dependencies": {
+                    "nested-package": {
+                        "version": "1.0.0",
+                        "resolved": "https://registry.npmjs.org/nested-package/-/nested-package-1.0.0.tgz",
+                        "integrity": "sha512-ghi789"
+                    }
+                }
+            }
+        }
+    }
+    mock_create_package_lock.return_value = mock_lock_data
+
+    dependencies = {"package-a": "^1.2.3"}
+    write_package_lock(dependencies, "test-package-lock.json")
+
+    mock_file.assert_called_once_with("test-package-lock.json", "w")
+    
+    written_data = ''.join(call.args[0] for call in mock_file().write.call_args_list)
+    
+    parsed_data = json.loads(written_data)
+    
+    assert parsed_data == mock_lock_data
+
+@patch("src.pyckage.conflicts.check_and_resolve_conflicts")
+@patch("src.pyckage.conflicts.get_package_info")
+def test_create_package_lock_with_conflicts(mock_get_package_info, mock_check_and_resolve):
+    mock_check_and_resolve.return_value = (False, ["Unresolved conflict"], {})
+
+    dependencies = {"package-a": "^1.0.0", "package-b": "^2.0.0"}
+    
+    with pytest.raises(ValueError) as excinfo:
+        create_package_lock(dependencies)
+    
+    assert "Unable to resolve all conflicts" in str(excinfo.value)
