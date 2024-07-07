@@ -3,7 +3,7 @@ import json
 import click
 from .add import add_package
 from .install import install_packages
-from .conflicts import check_and_resolve_conflicts
+from .conflicts import check_and_resolve_conflicts, write_package_lock
 
 
 @click.group()
@@ -45,6 +45,10 @@ def install():
                 json.dump(package_json, f, indent=2)
             click.echo("Dependencies updated in package.json")
 
+            # Generate package-lock.json
+            write_package_lock(resolved_dependencies)
+            click.echo("Generated package-lock.json")
+
             # Install resolved dependencies
             install_messages = install_packages(resolved_dependencies)
             for message in install_messages:
@@ -55,6 +59,9 @@ def install():
             )
     except Exception as e:
         click.echo(f"Error: {str(e)}", err=True)
+        click.echo(f"Full error details: {repr(e)}", err=True)
+        import traceback
+        click.echo(f"Traceback: {traceback.format_exc()}", err=True)
 
 
 if __name__ == "__main__":

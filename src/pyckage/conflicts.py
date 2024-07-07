@@ -1,5 +1,5 @@
 import json
-from typing import Dict, List, Tuple, Set
+from typing import Dict, List, Tuple, Set, Any
 from .npm_utils import get_package_info, find_max_satisfying
 
 
@@ -108,3 +108,62 @@ def check_and_resolve_conflicts(
     if conflicts:
         return resolve_conflicts(conflicts)
     return True, ["No conflicts detected."], dependencies
+
+def create_package_lock(dependencies: Dict[str, str]) -> Dict[str, Any]:
+    """Create a package-lock.json-like structure for the given dependencies."""
+    resolved, _, resolved_deps = check_and_resolve_conflicts(dependencies)
+    if not resolved:
+        raise ValueError("Unable to resolve all conflicts. Please check your dependencies.")
+
+    lock_data = {
+        "name": "project-name",
+        "version": "1.0.0",
+        "lockfileVersion": 2,
+        "requires": True,
+        "packages": {
+            "": {
+                "name": "project-name",
+                "version": "1.0.0",
+                "dependencies": dependencies  # Use original dependencies here
+            }
+        },
+        "dependencies": {}
+    }
+
+    def add_package_to_lock(package: str, version: str, parent_path: str = "") -> None:
+        try:
+            package_info = get_package_info(package, version)
+            exact_version = package_info["version"]
+            package_path = f"{parent_path}node_modules/{package}"
+            
+            lock_data["packages"][package_path] = {
+                "version": exact_version,
+                "resolved": package_info["dist"]["tarball"],
+                "integrity": package_info["dist"]["integrity"],
+                "requires": package_info.get("dependencies", {})
+            }
+
+            if parent_path == "":
+                lock_data["dependencies"][package] = {
+                    "version": exact_version,
+                    "resolved": package_info["dist"]["tarball"],
+                    "integrity": package_info["dist"]["integrity"],
+                }
+
+            if "dependencies" in package_info:
+                for nested_package, nested_version_range in package_info["dependencies"].items():
+                    add_package_to_lock(nested_package, nested_version_range, package_path + "/")
+
+        except Exception as e:
+            print(f"Error processing dependency {package}@{version}: {str(e)}")
+
+    for package, version in resolved_deps.items():
+        add_package_to_lock(package, version)
+
+    return lock_data
+
+def write_package_lock(dependencies: Dict[str, str], filename: str = "package-lock.json") -> None:
+    """Write the package lock data to a JSON file."""
+    lock_data = create_package_lock(dependencies)
+    with open(filename, "w") as f:
+        json.dump(lock_data, f, indent=2)
